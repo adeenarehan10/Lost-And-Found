@@ -7,6 +7,8 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 
+# from PIL.DdsImagePlugin import item
+
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,6 +124,57 @@ async def list_items(
 
 
 @router.get(
+    "/browse",
+    response_model=ItemListResponse,
+    summary="Browse active items",
+    description="List active items from all users."
+)
+async def browse_items(
+    item_type: Optional[str] = Query(None, description="Filter by item type"),
+    lost_or_found: Optional[str] = Query(None, description="Filter by lost or found"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> ItemListResponse:
+    """Browse active items reported by all users."""
+
+    query = select(Item).where(
+        Item.status == ItemStatus.ACTIVE.value
+    )
+
+    if item_type:
+        query = query.where(Item.item_type == item_type)
+
+    if lost_or_found:
+        query = query.where(Item.lost_or_found == lost_or_found)
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.options(selectinload(Item.images))
+    query = query.order_by(Item.created_at.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+
+    result = await db.execute(query)
+    items = result.scalars().all()
+
+    return ItemListResponse(
+        items=[
+            ItemResponse.model_validate(item)
+            for item in items
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=(
+            (total + page_size - 1) // page_size
+            if total > 0 else 0
+        )
+    )
+
+
+@router.get(
     "/{item_id}",
     response_model=ItemResponse,
     summary="Get item",
@@ -148,8 +201,9 @@ async def get_item(
             detail="Item not found"
         )
     
-    require_owner(item.user_id, current_user)
-    
+    if item.status != ItemStatus.ACTIVE.value:
+        require_owner(item.user_id, current_user)
+
     return ItemResponse.model_validate(item)
 
 
@@ -181,14 +235,45 @@ async def update_item(
             detail="Item not found"
         )
     
+    
     require_owner(item.user_id, current_user)
+
+    # Only active reports can be edited.
+    if item.status != ItemStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only active reports can be edited."
+        )
+
+    # Only update permitted report details.
+    update_data = item_data.model_dump(
+        exclude_unset=True,
+        exclude={"status"}
+    )
+
+    for field, value in update_data.items():
+        setattr(item, field, value)
+
+    await db.commit()
+
+    # Reload the item with its images.
+    result = await db.execute(
+        select(Item)
+        .options(selectinload(Item.images))
+        .where(Item.id == item_id)
+    )
+    item = result.scalar_one()
+
+    return ItemResponse.model_validate(item)
+
     
     # Update fields
+
     update_data = item_data.model_dump(exclude_unset=True)
+
     for field, value in update_data.items():
-        if field == 'status' and hasattr(value, 'value'):
-            value = value.value
         setattr(item, field, value)
+
     
     await db.commit()
     

@@ -126,6 +126,16 @@ async def list_matches(
                     source_item_id=match.source_item_id,
                     target_item_id=match.target_item_id,
                     status=match.status,
+                    current_user_confirmed=(
+                        match.source_confirmed_at is not None
+                        if source_item and source_item.user_id == current_user.id
+                        else match.target_confirmed_at is not None
+                    ),
+                    other_user_confirmed=(
+                        match.target_confirmed_at is not None
+                        if source_item and source_item.user_id == current_user.id
+                        else match.source_confirmed_at is not None
+                    ),
                     overall_score=match.overall_score,
                     vector_similarity=match.vector_similarity,
                     phash_similarity=match.phash_similarity,
@@ -231,6 +241,16 @@ async def get_match(
         source_item_id=match.source_item_id,
         target_item_id=match.target_item_id,
         status=match.status,
+        current_user_confirmed=(
+            match.source_confirmed_at is not None
+            if source_item and source_item.user_id == current_user.id
+            else match.target_confirmed_at is not None
+        ),
+        other_user_confirmed=(
+            match.target_confirmed_at is not None
+            if source_item and source_item.user_id == current_user.id
+            else match.source_confirmed_at is not None
+        ),
         overall_score=match.overall_score,
         vector_similarity=match.vector_similarity,
         phash_similarity=match.phash_similarity,
@@ -286,8 +306,8 @@ async def confirm_match(
     if match.status in [MatchStatus.BOTH_CONFIRMED, MatchStatus.REJECTED]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Match already {match.status.value}"
-        )
+            detail=f"Match already {getattr(match.status, 'value', match.status)}"    
+            )
     
     # Get items to verify ownership
     source_result = await db.execute(
@@ -383,7 +403,22 @@ async def confirm_match(
     
     await db.commit()
     await db.refresh(match)
-    
+
+    # Reload both items and their images after the commit.
+    source_result = await db.execute(
+        select(Item)
+        .options(selectinload(Item.images))
+        .where(Item.id == match.source_item_id)
+    )
+    source_item = source_result.scalar_one_or_none()
+
+    target_result = await db.execute(
+        select(Item)
+        .options(selectinload(Item.images))
+        .where(Item.id == match.target_item_id)
+    )
+    target_item = target_result.scalar_one_or_none()
+        
     # Build response
     contact_info = None
     if match.status == MatchStatus.BOTH_CONFIRMED:
@@ -409,6 +444,16 @@ async def confirm_match(
         source_item_id=match.source_item_id,
         target_item_id=match.target_item_id,
         status=match.status,
+        current_user_confirmed=(
+            match.source_confirmed_at is not None
+            if source_item and source_item.user_id == current_user.id
+            else match.target_confirmed_at is not None
+        ),
+        other_user_confirmed=(
+            match.target_confirmed_at is not None
+            if source_item and source_item.user_id == current_user.id
+            else match.source_confirmed_at is not None
+        ),
         overall_score=match.overall_score,
         vector_similarity=match.vector_similarity,
         phash_similarity=match.phash_similarity,

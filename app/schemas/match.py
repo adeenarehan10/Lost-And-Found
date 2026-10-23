@@ -27,6 +27,8 @@ class MatchResponse(BaseModel):
     source_item_id: str
     target_item_id: str
     status: str
+    current_user_confirmed: bool = False
+    other_user_confirmed: bool = False
     
     # Scores
     overall_score: float

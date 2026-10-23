@@ -189,13 +189,84 @@
     <script src="/static/js/api.js"></script>
     <script>
         let selectedType = null;
+        const editItemId = new URLSearchParams(window.location.search).get('edit');
+        let isEditMode = Boolean(editItemId);
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             UI.updateNav();
-            // Set default date to now
-            document.getElementById('eventDate').value = new Date().toISOString().slice(0, 16);
+
+            // Use local time for the default datetime-local value.
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            document.getElementById('eventDate').value =
+                now.toISOString().slice(0, 16);
+
+            if (!API.isLoggedIn()) {
+                if (isEditMode) {
+                    window.location.replace('/static/login.html');
+                }
+                return;
+            }
+
+            if (isEditMode) {
+                await loadItemForEditing();
+            }
         });
 
+        async function loadItemForEditing() {
+            try {
+                const item = await API.items.get(editItemId);
+
+                if (item.status !== 'active') {
+                    UI.toast('Only active reports can be edited.', 'error');
+                    setTimeout(() => {
+                        window.location.href = '/static/my-items.html';
+                    }, 1200);
+                    return;
+                }
+
+                selectedType = item.lost_or_found;
+
+                document.getElementById('typeSelector').style.display = 'none';
+                document.getElementById('reportForm').style.display = 'block';
+
+                document.querySelector('.page-header h1').textContent = 'Edit Report';
+                document.querySelector('.page-header p').textContent =
+                    'Update the details of your reported item';
+
+                document.getElementById('formTitle').textContent = 'Edit Report';
+                document.querySelector('.form-header button').style.display = 'none';
+
+                document.getElementById('title').value = item.title || '';
+                document.getElementById('description').value = item.description || '';
+                const categoryField = document.getElementById('itemCategory');
+                categoryField.value = item.item_type || '';
+                categoryField.disabled = true;
+                document.getElementById('latitude').value = item.latitude ?? '';
+                document.getElementById('longitude').value = item.longitude ?? '';
+                document.getElementById('locationName').value = item.location_name || '';
+
+                if (item.event_date) {
+                    const date = new Date(item.event_date);
+                    date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+                    document.getElementById('eventDate').value =
+                        date.toISOString().slice(0, 16);
+                }
+
+                // Images are left unchanged in edit mode.
+                document.querySelectorAll('#itemForm .form-section')[2].style.display =
+                    'none';
+
+                document.querySelector('#itemForm button[type="submit"]').textContent =
+                    'Save Changes';
+
+            } catch (error) {
+                UI.toast(error.message || 'Could not load report for editing.', 'error');
+                setTimeout(() => {
+                    window.location.href = '/static/my-items.html';
+                }, 1200);
+            }
+        }
         function selectType(type) {
             if (!API.isLoggedIn()) {
                 UI.toast('Please login to report an item', 'error');
@@ -391,48 +462,54 @@
             }
 
             const submitBtn = this.querySelector('button[type="submit"]');
-            submitBtn.textContent = 'Submitting...';
+            submitBtn.textContent = isEditMode ? 'Saving...' : 'Submitting...';
             submitBtn.disabled = true;
 
-            try {
-                // Create item
+           
+        try {
+            const payload = {
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value || null,
+                latitude: parseFloat(document.getElementById('latitude').value),
+                longitude: parseFloat(document.getElementById('longitude').value),
+                location_name: document.getElementById('locationName').value || null,
+                event_date: new Date(
+                    document.getElementById('eventDate').value
+                ).toISOString()
+            };
+
+            if (isEditMode) {
+                // Update the existing report.
+                await API.items.update(editItemId, payload);
+
+                UI.toast('Report updated successfully!', 'success');
+            } else {
+                // Create a new report, preserving existing functionality.
                 const item = await API.items.create({
-                    title: document.getElementById('title').value,
-                    description: document.getElementById('description').value || null,
+                    ...payload,
                     item_type: document.getElementById('itemCategory').value,
-                    lost_or_found: selectedType,
-                    latitude: parseFloat(document.getElementById('latitude').value),
-                    longitude: parseFloat(document.getElementById('longitude').value),
-                    location_name: document.getElementById('locationName').value || null,
-                    event_date: new Date(document.getElementById('eventDate').value).toISOString()
+                    lost_or_found: selectedType
                 });
 
-                // Upload images from collected files (gallery + camera)
+                // Preserve the existing image-upload workflow.
                 if (collectedFiles.length > 0) {
-                    UI.toast(`Uploading ${collectedFiles.length} image(s)...`, 'info');
-                    let uploadedCount = 0;
-                    
                     for (const file of collectedFiles) {
-                        try {
-                            await API.items.uploadImage(item.id, file);
-                            uploadedCount++;
-                        } catch (imgError) {
-                            console.error('Image upload failed:', imgError);
-                            UI.toast(`Failed to upload: ${file.name}`, 'error');
-                        }
-                    }
-                    
-                    if (uploadedCount > 0) {
-                        UI.toast(`${uploadedCount} image(s) uploaded!`, 'success');
+                        await API.items.uploadImage(item.id, file);
                     }
                 }
 
                 UI.toast('Report submitted successfully!', 'success');
-                setTimeout(() => window.location.href = '/static/my-items.html', 1000);
+            }
+
+            setTimeout(() => {
+                window.location.href = '/static/my-items.html';
+            }, 1000);
+
+
                 
             } catch (error) {
                 UI.toast(error.message, 'error');
-                submitBtn.textContent = 'Submit Report';
+                submitBtn.textContent = isEditMode ? 'Save Changes' : 'Submit Report';
                 submitBtn.disabled = false;
             }
         };

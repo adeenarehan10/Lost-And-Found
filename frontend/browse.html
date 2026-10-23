@@ -122,7 +122,8 @@
                 if (lostFound) params.lost_or_found = lostFound;
                 if (category) params.item_type = category;
                 
-                const data = await API.items.list(params);
+                const query = new URLSearchParams(params).toString();
+                const data = await API.request(`/items/browse?${query}`);
                 renderItems(container, data.items || []);
             } catch (error) {
                 container.innerHTML = `<div class="empty-state"><span class="icon">❌</span><h3>Error</h3><p>${error.message}</p></div>`;

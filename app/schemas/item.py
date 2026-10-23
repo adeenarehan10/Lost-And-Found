@@ -78,7 +78,7 @@ class ItemUpdate(BaseModel):
     longitude: Optional[float] = Field(None, ge=-180, le=180)
     location_name: Optional[str] = Field(None, max_length=255)
     event_date: Optional[datetime] = None
-    status: Optional[ItemStatus] = None
+
 
 
 class ImageSummary(BaseModel):
